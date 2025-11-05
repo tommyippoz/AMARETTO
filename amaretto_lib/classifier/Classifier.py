@@ -3,6 +3,7 @@ import copy
 import numpy
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.preprocessing import LabelEncoder
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.utils import check_X_y
 from sklearn.utils.multiclass import unique_labels
 from sklearn.utils.validation import check_is_fitted, check_array
@@ -15,7 +16,7 @@ class Classifier(ClassifierMixin, BaseEstimator):
     Wraps implementations from different frameworks (if needed), sklearn and many deep learning utilities
     """
 
-    def __init__(self, clf):
+    def __init__(self, clf = DecisionTreeClassifier()):
         """
         Constructor of a generic Classifier
         :param clf: algorithm to be used as Classifier

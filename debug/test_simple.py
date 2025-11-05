@@ -22,6 +22,7 @@ from confens.classifiers.ConfidenceBoosting import ConfidenceBoosting
 from amaretto_lib.classifier.Classifier import Classifier
 
 # ------- GLOBAL VARS -----------
+from amaretto_lib.classifier.IntrusionDetector import IntrusionDetector
 from amaretto_lib.utils.classifier_utils import get_classifier_name
 
 CSV_FOLDER = "input_folder"
@@ -32,7 +33,7 @@ NORMAL_TAG = 'normal'
 # Name of the file in which outputs of the analysis will be saved
 SCORES_FILE = "test_out.csv"
 # Percantage of test data wrt train data
-TT_SPLIT = 0.5
+TT_SPLIT = 0.6
 # True if debug information needs to be shown
 VERBOSE = True
 
@@ -59,12 +60,12 @@ def get_learners(cont_perc):
     :return: the list of classifiers to be trained
     """
     return [
-        #DecisionTreeClassifier(),
-        #ExtraTreesClassifier(n_estimators=10),
-        Classifier(DecisionTreeClassifier()),
+        DecisionTreeClassifier(),
+        IntrusionDetector(),
+        RandomForestClassifier(),
         ConfidenceBagging(clf=ExtraTreeClassifier(), n_base=10),
-        ConfidenceBoosting(clf=ExtraTreeClassifier(), n_base=10)
-        #LogitBoost(n_estimators=100)
+        ConfidenceBoosting(clf=RandomForestClassifier(n_estimators=5), n_base=10),
+
     ]
 
 # ----------------------- MAIN ROUTINE ---------------------
@@ -78,7 +79,7 @@ if __name__ == '__main__':
     #     existing_exps = existing_exps.loc[:, ['dataset_tag', 'clf']]
     # else:
     with open(SCORES_FILE, 'w') as f:
-        f.write("dataset_tag,clf,binary,tt_split,acc,misc,mcc,bacc,time,model_size,min_ok,med_ok,avg_ok,max_ok,min_misc,med_misc,avg_misc,max_misc\n")
+        f.write("dataset_tag,clf,binary,tt_split,acc,misc,mcc,bacc,time,model_size\n")
 
     # Iterating over CSV files in folder
     for dataset_file in os.listdir(CSV_FOLDER):
@@ -144,25 +145,14 @@ if __name__ == '__main__':
 
                     # Scoring
                     y_pred = classifier.predict(x_test)
-                    y_proba = classifier.predict_proba(x_test)
-                    y_conf = numpy.max(y_proba, axis=1)
+                    #y_proba = classifier.predict_proba(x_test)
+                    #y_conf = numpy.max(y_proba, axis=1)
 
                     # Computing Metrics
                     acc = metrics.accuracy_score(y_test, y_pred)
                     misc = int((1 - acc) * len(y_test))
                     mcc = abs(metrics.matthews_corrcoef(y_test, y_pred))
                     bacc = metrics.balanced_accuracy_score(y_test, y_pred)
-
-                    # Confidence Metrics
-                    conf_ok = y_conf[numpy.where(y_pred == y_test)[0]]
-                    conf_ok = [0.5] if len(conf_ok) == 0 else conf_ok
-                    conf_ok_metrics = [numpy.min(conf_ok), numpy.median(conf_ok), numpy.average(conf_ok),
-                                       numpy.max(conf_ok)]
-                    conf_misc = y_conf[numpy.where(y_pred != y_test)[0]]
-                    conf_misc = [0.5] if len(conf_misc) == 0 else conf_misc
-                    conf_misc_metrics = [numpy.min(conf_misc), numpy.median(conf_misc),
-                                         numpy.average(conf_misc),
-                                         numpy.max(conf_misc)]
 
                     # Prints just accuracy for multi-class classification problems, no confusion matrix
                     print('%d/%d Accuracy: %.3f, MCC: %.3f, train time: %d \t-> %s' %
@@ -173,9 +163,7 @@ if __name__ == '__main__':
                         # Prints result of experiment in CSV file
                         myfile.write(full_name + "," + clf_name + "," + str("NOPE") + "," +
                                          str(TT_SPLIT) + ',' + str(acc) + "," + str(misc) + "," + str(mcc) + "," +
-                                         str(bacc) + "," + str(train_time) + "," + str(size) + "," +
-                                         ",".join(["{:.4f}".format(met) for met in conf_ok_metrics]) + "," +
-                                         ",".join(["{:.4f}".format(met) for met in conf_misc_metrics]) + "\n")
+                                         str(bacc) + "," + str(train_time) + "," + str(size) + "\n")
 
                 classifier = None
                 i += 1
