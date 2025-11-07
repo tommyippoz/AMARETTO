@@ -1,6 +1,7 @@
 import copy
 
 import numpy
+from pyod.models.base import BaseDetector
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.preprocessing import LabelEncoder
 from sklearn.tree import DecisionTreeClassifier
@@ -8,15 +9,18 @@ from sklearn.utils import check_X_y
 from sklearn.utils.multiclass import unique_labels
 from sklearn.utils.validation import check_is_fitted, check_array
 
+from amaretto_lib.utils.classifier_utils import get_classifier_name
+from amaretto_lib.utils.general_utils import current_ms
+
 
 class Classifier(ClassifierMixin, BaseEstimator):
     """
-    Basic Abstract Class for Classifiers.
+    Basic Class for Classifiers.
     Abstract methods are only the classifier_name, with many degrees of freedom in implementing them.
     Wraps implementations from different frameworks (if needed), sklearn and many deep learning utilities
     """
 
-    def __init__(self, clf = DecisionTreeClassifier()):
+    def __init__(self, clf = DecisionTreeClassifier(), normal_tag: str = "normal"):
         """
         Constructor of a generic Classifier
         :param clf: algorithm to be used as Classifier
@@ -27,41 +31,82 @@ class Classifier(ClassifierMixin, BaseEstimator):
         self.feature_importances_ = None
         self.X_ = None
         self.y_ = None
+        self.normal_tag = normal_tag
 
-    def fit(self, X, y=None):
+    def fit(self, X, y=None, verbose: bool = False):
+        """
+        Fits the Classifier
+        :param verbose: True if debug information has to be shown
+        :param X: the train set
+        :param y: the train labels (can be None if unsupervised)
+        :return: placeholder (self)
+        """
 
         # Check that X and y have correct shape
         X, y = check_X_y(X, y)
 
         # Store the classes seen during fit + other data
-        if y is not None:
-            self.classes_ = unique_labels(y)
-        else:
-            self.classes_ = [0, 1]
-        # self.X_ = X
-        # self.y_ = y
+        self.classes_ = list(unique_labels(y)) if y is not None else [self.normal_tag, "attack"]
+        if self.is_unsupervised() and y is not None:
+            # Makes sure the first tag is normal_tag
+            self.classes_.remove(self.normal_tag)
+            self.classes_.insert(0, self.normal_tag)
+            # Checks for contamination
+            att_cont = sum(1*(y != self.normal_tag)) / len(y)
+            if att_cont <= 0.5:
+                self.clf.contamination = att_cont
+            else:
+                self.clf.contamination = 0.5
+                self.classes_ = self.classes_[::-1]
+        self.classes_ = numpy.asarray(self.classes_)
 
         # Train clf
-        self.clf.fit(X, y)
+        start_ms = current_ms()
+        if self.is_unsupervised():
+            # Unsupervised
+            self.clf.fit(X)
+        else:
+            # Supervised
+            self.clf.fit(X, y)
+        if verbose:
+            print("Training completed in %d ms" % current_ms() - start_ms)
+
         self.feature_importances_ = self.compute_feature_importances()
 
-        # Return the classifier
-        return self
 
     def predict(self, X):
         """
         Method to compute predict of a classifier
         :return: array of predicted class
         """
-        probas = self.predict_proba(X)
-        if self.is_unsupervised():
-            return numpy.argmax(probas, axis=1)
+        if isinstance(self.clf, BaseDetector):
+            return self.classes_[self.clf.predict(X)]
         else:
-            return self.classes_[numpy.argmax(probas, axis=1)]
+            return self.classes_[numpy.argmax(self.predict_proba(X), axis=1)]
+
+    def decision_function(self, X):
+        """
+        pyod function to override. Calls the wrapped classifier or calls decision_function function.
+        :param X: test set
+        :return: decision function
+        """
+        if self.is_unsupervised():
+            return self.clf.decision_function(X)
+        else:
+            if X is None:
+                return None
+            X = check_array(X)
+            probas = self.predict_proba(X)
+            if probas.shape[1] >= 2:
+                a = probas[:, 1] / probas[:, 0]
+                return a
+            else:
+                return numpy.zeros(X.shape[0])
 
     def predict_proba(self, X):
         """
-        Method to compute probabilities of predicted classes
+        Method to compute probabilities of predicted classes.
+        For unsupervised, it has to be overridden since PYOD's implementation of predict_proba is wrong
         :return: array of probabilities for each classes
         """
 
@@ -69,23 +114,24 @@ class Classifier(ClassifierMixin, BaseEstimator):
         check_is_fitted(self)
         X = check_array(X)
 
-        return self.clf.predict_proba(X)
-
-    def decision_function(self, X):
-        """
-        Compatibility with PYOD
-        :param X: the test set
-        :return: a numpy array, or None
-        """
-        if X is None:
-            return None
-        X = check_array(X)
-        probas = self.predict_proba(X)
-        if probas.shape[1] >= 2:
-            a = probas[:, 1] / probas[:, 0]
-            return a
+        if self.is_unsupervised():
+            # Unsupervised
+            pred_score = self.decision_function(X)
+            probs = numpy.zeros((X.shape[0], 2))
+            if isinstance(self.clf.contamination, (float, int)):
+                pred_thr = pred_score - self.clf.threshold_
+            min_pt = min(pred_thr)
+            max_pt = max(pred_thr)
+            anomaly = pred_thr > 0
+            cont = numpy.asarray([pred_thr[i] / max_pt if anomaly[i] else (pred_thr[i] / min_pt if min_pt != 0 else 0.2)
+                                  for i in range(0, len(pred_thr))])
+            probs[:, 0] = 0.5 + cont / 2
+            probs[:, 1] = 1 - probs[:, 0]
+            probs[anomaly, 0], probs[anomaly, 1] = probs[anomaly, 1], probs[anomaly, 0]
+            return probs
         else:
-            return numpy.zeros(X.shape[0])
+            # Supervised
+            return self.clf.predict_proba(X)
 
     def predict_confidence(self, X):
         """
@@ -111,84 +157,20 @@ class Classifier(ClassifierMixin, BaseEstimator):
         true if the classifier is unsupervised
         :return: boolean
         """
-        return hasattr(self, 'classes_') and numpy.array_equal(self.classes_, [0, 1])
+        return isinstance(self.clf, BaseDetector)
 
     def classifier_name(self):
         """
         Returns the name of the classifier (as string)
         """
-        return self.clf.__class__.__name__
-
-    def get_diversity(self, X, y, metrics=None):
-        """
-        Returns diversity metrics. Works only with ensembles.
-        :param metrics: name of the metrics to output (list of Metric objects)
-        :param X: test set
-        :param y: labels of the test set
-        :return: diversity metrics
-        """
-        X = check_array(X)
-        predictions = []
-        check_is_fitted(self)
-        if hasattr(self, "estimators_"):
-            # If it is an ensemble and if it is trained
-            for baselearner in self.estimators_:
-                predictions.append(baselearner.predict(X))
-            predictions = numpy.column_stack(predictions)
-        elif self.clf is not None:
-            # If it wraps an ensemble
-            check_is_fitted(self.clf)
-            if hasattr(self.clf, "estimators_"):
-                # If it is an ensemble and if it is trained
-                for baselearner in self.clf.estimators_:
-                    predictions.append(baselearner.predict(X))
-                predictions = numpy.column_stack(predictions)
-        if predictions is not None and len(predictions) > 0:
-            # Compute metrics
-            metric_scores = {}
-            if metrics is None or not isinstance(metrics, list):
-                metrics = get_default()
-            for metric in metrics:
-                metric_scores[metric.get_name()] = metric.compute_diversity(predictions, y)
-            return metric_scores
-        else:
-            # If it is not an ensemble
-            return {}
+        return get_classifier_name(self.clf)
 
     def set_params(self, **parameters):
+        """
+        Compatibility with scikit-learn
+        :param parameters:
+        :return:
+        """
         for parameter, value in parameters.items():
             setattr(self.clf, parameter, value)
         return self
-
-
-class XGB(Classifier):
-    """
-    Wrapper for the xgboost.XGBClassifier algorithm
-    Can be used as reference to see what's needed to extend the Classifier class
-    """
-
-    def __init__(self, n_estimators=100):
-        Classifier.__init__(self, XGBClassifier(n_estimators=n_estimators))
-        self.l_encoder = None
-
-    def fit(self, X, y=None):
-        # Check that X and y have correct shape
-        X, y = check_X_y(X, y)
-
-        # Store the classes seen during fit + other data
-        self.classes_ = unique_labels(y)
-        self.l_encoder = LabelEncoder()
-        y = self.l_encoder.fit_transform(y)
-
-        # self.X_ = X
-        # self.y_ = y
-
-        # Train clf
-        self.clf.fit(X, y)
-        self.feature_importances_ = self.compute_feature_importances()
-
-        # Return the classifier
-        return self
-
-    def classifier_name(self):
-        return "XGBClassifier(" + str(self.clf.n_estimators) + ")"

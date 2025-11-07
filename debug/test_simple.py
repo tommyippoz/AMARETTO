@@ -8,6 +8,7 @@ import pandas
 import sklearn.metrics as metrics
 import sklearn.model_selection as ms
 # Used to save a classifier and measure its size in KB
+from pyod.models.iforest import IForest
 from sklearn.base import is_classifier
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 # Scikit-Learn algorithms
@@ -22,6 +23,8 @@ from confens.classifiers.ConfidenceBoosting import ConfidenceBoosting
 from amaretto_lib.classifier.Classifier import Classifier
 
 # ------- GLOBAL VARS -----------
+from amaretto_lib.classifier.FNTunedClassifier import FNTunedClassifier
+from amaretto_lib.classifier.FPTunedClassifier import FPTunedClassifier
 from amaretto_lib.classifier.IntrusionDetector import IntrusionDetector
 from amaretto_lib.utils.classifier_utils import get_classifier_name
 
@@ -36,6 +39,9 @@ SCORES_FILE = "test_out.csv"
 TT_SPLIT = 0.6
 # True if debug information needs to be shown
 VERBOSE = True
+# mostly for debug
+MAKE_BINARY = True
+
 
 # Set random seed for reproducibility
 random.seed(42)
@@ -60,11 +66,19 @@ def get_learners(cont_perc):
     :return: the list of classifiers to be trained
     """
     return [
-        DecisionTreeClassifier(),
-        IntrusionDetector(),
-        RandomForestClassifier(),
-        ConfidenceBagging(clf=ExtraTreeClassifier(), n_base=10),
-        ConfidenceBoosting(clf=RandomForestClassifier(n_estimators=5), n_base=10),
+        #DecisionTreeClassifier(),
+        #IntrusionDetector(),
+        #RandomForestClassifier(),
+        #FNTunedClassifier(max_FNR=0.0003, clf=RandomForestClassifier()),
+        Classifier(clf=IForest(contamination=0.3)),
+        FNTunedClassifier(max_FNR=0.1, clf=IForest(contamination=0.3)),
+        FNTunedClassifier(max_FNR=0.01, clf=IForest(contamination=0.3)),
+        FNTunedClassifier(max_FNR=0.001, clf=IForest(contamination=0.3)),
+        FNTunedClassifier(max_FNR=0.0001, clf=IForest(contamination=0.3)),
+        FPTunedClassifier(max_FPR=0.1, clf=IForest(contamination=0.3)),
+        FPTunedClassifier(max_FPR=0.01, clf=IForest(contamination=0.3)),
+        #ConfidenceBagging(clf=ExtraTreeClassifier(), n_base=10),
+        #ConfidenceBoosting(clf=RandomForestClassifier(n_estimators=5), n_base=10),
 
     ]
 
@@ -109,8 +123,11 @@ if __name__ == '__main__':
             # Binarize if needed (for anomaly detection you need a 2-class problem, requires one of the classes to have NORMAL_TAG)
             normal_perc = None
             y = df[LABEL_NAME].to_numpy()
+            if MAKE_BINARY:
+                y = numpy.where(y == NORMAL_TAG, NORMAL_TAG, "attack")
             if VERBOSE:
                 print("Dataset contains %d Classes" % len(numpy.unique(y)))
+
 
             # Set up train test split excluding categorical values that some algorithms cannot handle
             # 1-Hot-Encoding or other approaches may be used instead of removing

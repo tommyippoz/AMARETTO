@@ -6,8 +6,6 @@ from pyod.models.base import BaseDetector
 from sklearn.base import is_classifier
 from sklearn.utils.validation import check_is_fitted, check_array
 
-from amaretto_lib.classifier.Classifier import Classifier
-
 
 def predict_proba(clf, X, get_base:bool = False):
     """
@@ -65,7 +63,7 @@ def get_classifier_name(clf_object):
     """
     clf_name = ""
     if clf_object is not None:
-        if is_classifier(clf_object) or isinstance(clf_object, Classifier):
+        if is_classifier(clf_object):
             clf_name = get_single_classifier_name(clf_object)
         elif isinstance(clf_object, Iterable):
             if len(clf_object) < 5:
@@ -75,7 +73,7 @@ def get_classifier_name(clf_object):
             else:
                 clf_name = clf_name + str(len(clf_object)) + "_algs"
         else:
-            clf_name = str(clf_object)
+            clf_name = str(clf_object.__class__.__name__)
         if hasattr(clf_object, "base_estimator") and hasattr(clf_object, "n_estimators"):
             clf_name = clf_name + "(" + get_single_classifier_name(clf_object.base_estimator) + ";" \
                        + str(clf_object.n_estimators) + ")"
