@@ -1,6 +1,4 @@
-import numpy
 from sklearn.model_selection import train_test_split
-
 from sklearn.tree import DecisionTreeClassifier
 
 from amaretto_lib.classifier.Classifier import Classifier
@@ -22,6 +20,7 @@ class FNTunedClassifier(Classifier):
         self.tv_split = tv_split
         self.normal_class = normal_class
         self.probability_threshold = None
+        self.tuning_successful = False
 
     def fit(self, X, y, verbose: bool = False):
         """
@@ -33,16 +32,22 @@ class FNTunedClassifier(Classifier):
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=1-self.tv_split, random_state=42)
         super().fit(X_train, y_train)
 
+        if len(self.classes_) != 2:
+            print("--------------- NOT A BINARY CLASSIFIER, cannot perform FN Tuning")
+
         # Iterative process for FN tuning
         y_pred = super().predict(X_test)
         y_proba = super().predict_proba(X_test)
         fns = (y_test != y_pred) * (y_pred == self.normal_tag)
         fn_probas = sorted(y_proba[fns, 0])
         self.probability_threshold = 0.5
+        if len(fn_probas) / len(y_test) < self.max_FNR:
+            self.tuning_successful = True
         while len(fn_probas) > 0:
             residual_FNR = len(fn_probas) / len(y_test)
             if residual_FNR < self.max_FNR:
                 # Means that we are able to avoid enough FNs to comply with the max_FNR
+                self.tuning_successful = True
                 break
             # Otherwise, we have to modify the decision range (lower "normal" probability)
             self.probability_threshold = fn_probas.pop(0)
@@ -57,7 +62,7 @@ class FNTunedClassifier(Classifier):
         True if tuning ended successfully
         :return: a boolean
         """
-        return self.probability_threshold is not None
+        return self.tuning_successful
 
     def predict(self, X):
         """
